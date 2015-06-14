@@ -38,10 +38,11 @@ public class Zookeeper4Hdfs implements Runnable {
 
 	private static final long REPLY_FILE_CHK_INTERVAL = 1000;// 每秒钟检查一次是否所有NN都reply了
 
-	private static long nextTxnID = 0;// 下一个事务的编号
-	private static long waitTxn = 0; // 正在等待的事务数
-	private static long processingTxnId = 1;
-	private static String currentTxnIdFile = txnDirPrefix + processingTxnId;// 当前正在执行的事务文件
+	private static volatile long txnIDNumber = 0;// 当前事务的编号
+	private static volatile long waitTxn = 0; // 正在等待的事务数
+	private static volatile long processingTxnId = 1;
+	private static volatile String currentTxnIdFile = txnDirPrefix
+			+ processingTxnId;// 当前正在执行的事务文件
 
 	private static ZooKeeper zk;
 
@@ -84,24 +85,27 @@ public class Zookeeper4Hdfs implements Runnable {
 	 */
 	// NN protocol, called by NN
 	public boolean prepareLock(String ops) {
-		//System.out.println("PrepareLock0...");
-		nextTxnID++;
+		// System.out.println("PrepareLock0...");
+		// synchronized
+		txnIDNumber++;
 		waitTxn++;
 		// processingTxnId = nextTxnID - waitTxn;
 		String path = null, str;
 		// String leader =
 		// hostMap.keySet().iterator().next();//待续，目前是选择NN编号最小的NN为leader
-		String state = TxnState.PREPARE_LOCK.text;//"prepare_lock";
+		String state = TxnState.PREPARE_LOCK.text;// "prepare_lock";
 		Stat stat = null;
 		str = txnDirPrefix + processingTxnId; // str = "/Txn/txn_id"
-		//data = state;// + STATE_OPS_LOG_SEPARATOR + ops;// 数据为状态和事务操作
-		if (nextTxnID - waitTxn + 1 != processingTxnId) {
-			currentTxnIdFile = str;
-		}
-		//System.out.println("PrepareLock...str:" + str);
+		// data = state;// + STATE_OPS_LOG_SEPARATOR + ops;// 数据为状态和事务操作
+		// synchronized (currentTxnIdFile){
+		// if (txnIDNumber - waitTxn + 1 > processingTxnId) {
+		currentTxnIdFile = str;
+		// }
+		// System.out.println("PrepareLock...str:" + str);
 		try {
-			if(zk.exists(txnRoot, false) == null){
-				zk.create(txnRoot, "txnRoot".getBytes(), Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+			if (zk.exists(txnRoot, false) == null) {
+				zk.create(txnRoot, "txnRoot".getBytes(), Ids.OPEN_ACL_UNSAFE,
+						CreateMode.PERSISTENT);
 			}
 			stat = zk.exists(str, false);
 		} catch (KeeperException | InterruptedException e) {
@@ -112,16 +116,16 @@ public class Zookeeper4Hdfs implements Runnable {
 			System.out.println("stat=null!");
 			try {
 				path = zk.create(str, state.getBytes(), Ids.OPEN_ACL_UNSAFE, // create
-																			// file/dir
-																			// "/Txn/txn_id
+																				// file/dir
+																				// "/Txn/txn_id
 						CreateMode.PERSISTENT);
 			} catch (KeeperException | InterruptedException e) {
 				// TODO Auto-generated catch block
 				// zk.delete(str, 0);
 				e.printStackTrace();
 			}
-			//System.out.println("path:" + path + ", str:" + str);
-			//System.out.println("path==str? " + path.equals(str));
+			// System.out.println("path:" + path + ", str:" + str);
+			// System.out.println("path==str? " + path.equals(str));
 			if (path.equals(str)) {
 				System.out.println("Creating /txn/txn_id/tran....");
 				str += "/tran"; // str = "/Txn/txn_id/tran"
@@ -134,7 +138,7 @@ public class Zookeeper4Hdfs implements Runnable {
 				}
 				System.out.println("Tran Created!");
 				return true;
-				//System.out.println("path:" + path);
+				// System.out.println("path:" + path);
 			} else {
 				// zk.delete(path, version);
 				// 第一步创建失败，则直接失败
@@ -162,13 +166,16 @@ public class Zookeeper4Hdfs implements Runnable {
 
 		// ZooKeeper zk = getZooKeeper();
 		str = currentTxnIdFile + "/" + replyFilePrefix + nnId;
+		System.out.println("str:" + str);
 		Stat stat = zk.exists(str, false);
 		// System.out.println("reply_id:" + str);
 		if (stat == null) {
+			System.out.println("Creating ReplyFile");
 			path = zk.create(str, state.getBytes(), Ids.OPEN_ACL_UNSAFE,
 					CreateMode.PERSISTENT);
 		}
-		return path == str;
+		System.out.println("path:" + path);
+		return str.equals(path);
 	}
 
 	/**
@@ -184,15 +191,15 @@ public class Zookeeper4Hdfs implements Runnable {
 		String path = currentTxnIdFile;
 
 		try {
-			while(!hasReceivedAllNNReply()){
+			while (!hasReceivedAllNNReply()) {
 				System.out.println("waitting all reply...");
 			}
-			//if (hasReceivedAllNNReply()) {
+			// if (hasReceivedAllNNReply()) {
 			System.out.println("Set the state of txn_id to \"Release_Lock\"");
-				ret = (zk.setData(path, state.toString().getBytes(), -1) != null) ? true
-						: false;
-				System.out.println("Release_Lock!");
-			//}
+			ret = (zk.setData(path, state.toString().getBytes(), -1) != null) ? true
+					: false;
+			System.out.println("Release_Lock!");
+			// }
 		} catch (InterruptedException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -262,7 +269,7 @@ public class Zookeeper4Hdfs implements Runnable {
 		// waitTxn--;
 	}
 
-	public boolean deleteReplyFile(long nnId){
+	public boolean deleteReplyFile(long nnId) {
 		boolean ret = false;
 		String path = currentTxnIdFile + "/" + replyFilePrefix + nnId;
 		Stat stat = null;
@@ -285,35 +292,43 @@ public class Zookeeper4Hdfs implements Runnable {
 	}
 
 	long getNextTxnId() {// get the next txn number
-		return nextTxnID;
+		return txnIDNumber;
 	}
 
 	long getProcessingTxnId() {
-		return nextTxnID - waitTxn - 1;// 正在处理的txn编号
+		return txnIDNumber - waitTxn - 1;// 正在处理的txn编号
 	}
 
+	public boolean isExists() throws KeeperException, InterruptedException{
+		boolean ret;
+		return zk.exists(currentTxnIdFile, false) != null;
+		//return ret;
+	}
 	public TxnState getTxnIdFileState() throws KeeperException,
 			InterruptedException {
 		String str;
 		TxnState state = null;
+		System.out.println("currentTxnIdFile:" + currentTxnIdFile);
+		if (zk.exists(currentTxnIdFile, false) != null) {
+			str = new String(zk.getData(currentTxnIdFile, false, null));
+			//System.out.println("str:" + str);
 
-		str = zk.getData(currentTxnIdFile, false, null).toString();
-
-		switch (str) {
-		case "PREPARE_LOCK":
-			state = TxnState.PREPARE_LOCK;
-			break;
-		case "EXEC_DELETE":
-			state = TxnState.EXEC_DELETE;
-			break;
-		case "EXEC_RENAME":
-			state = TxnState.EXEC_RENAME;
-			break;
-		case "RELEASE_LOCK":
-			state = TxnState.RELEASE_LOCK;
-			break;
+			switch (str) {
+			case "PREPARE_LOCK":
+				state = TxnState.PREPARE_LOCK;
+				break;
+			case "EXEC_DELETE":
+				state = TxnState.EXEC_DELETE;
+				break;
+			case "EXEC_RENAME":
+				state = TxnState.EXEC_RENAME;
+				break;
+			case "RELEASE_LOCK":
+				state = TxnState.RELEASE_LOCK;
+				break;
+			}
 		}
-
+		//System.out.println("state:" + state.text);
 		return state;
 	}
 
@@ -341,32 +356,33 @@ public class Zookeeper4Hdfs implements Runnable {
 	public boolean hasReceivedAllNNReply() throws InterruptedException,
 			KeeperException {
 		boolean ret = false;
-		int i=0;
+		int i = 0;
 		String path = currentTxnIdFile;
-		//System.out.println("List...path:" + path);
+		// System.out.println("List...path:" + path);
 		List<String> list = zk.getChildren(path, false);
-		//System.out.println("while... list.size:" + list.size() + ", hostMap.size:" + hostMap.size());
+		// System.out.println("while... list.size:" + list.size() +
+		// ", hostMap.size:" + hostMap.size());
 		do {
-			//System.out.println("in whilesdfdfs...");
-			if (list.size() == hostMap.size()){// 每个NN都创建了reply_id文件
-				//ret = true;
-				//System.out.println("hasReceivedAllNNReply, while");
+			// System.out.println("in whilesdfdfs...");
+			if (list.size() == hostMap.size()) {// 每个NN都创建了reply_id文件
+				// ret = true;
+				// System.out.println("hasReceivedAllNNReply, while");
 				return true;
-			}else {
+			} else {
 				System.out.println("Receiving all NN Reply..." + (++i));
 				Thread.sleep(REPLY_FILE_CHK_INTERVAL);// 这层逻辑应该交由用户自己实现，目前采用等待1000ms后再次检查
 				list = zk.getChildren(path, false);
 			}
-		}while(!ret);
+		} while (!ret);
 		return ret;
 	}
 
 	public boolean isAllReplyFileDeleted() throws KeeperException,
 			InterruptedException {
 		boolean ret;
-		String path = currentTxnIdFile ;
+		String path = currentTxnIdFile;
 		List<String> list = zk.getChildren(path, false);
-		//System.out.println("list.size:" + list.size());
+		// System.out.println("list.size:" + list.size());
 		ret = (list.size() == 1) ? true : false;// only one file in the
 												// folder---tran
 		return ret;
@@ -382,17 +398,18 @@ public class Zookeeper4Hdfs implements Runnable {
 	 * @throws InterruptedException
 	 * @throws KeeperException
 	 */
-	public void deleteTxnIdFile() throws KeeperException,
-			InterruptedException {
+	public void deleteTxnIdFile() throws KeeperException, InterruptedException {
 		System.out.println("deleting the TxnIdFile...");
 		String path = currentTxnIdFile;
 		String data = new String(zk.getData(path, false, null));
-		//String stat = data.toString();
+		// String stat = data.toString();
 		boolean release = data.equals(TxnState.RELEASE_LOCK.toString());
 		boolean rep = isAllReplyFileDeleted();
-		System.out.println("data:" + data + ", State:" + TxnState.RELEASE_LOCK.text);
-		while ((!release)	|| (!rep)) {// waitting if no "RELEASE_LOCK" or "NO Reply"
-			//data = new String(zk.getData(path, false, null));
+		System.out.println("data:" + data + ", State:"
+				+ TxnState.RELEASE_LOCK.text);
+		while ((!release) || (!rep)) {// waitting if no "RELEASE_LOCK" or
+										// "NO Reply"
+			// data = new String(zk.getData(path, false, null));
 			release = data.equals(TxnState.RELEASE_LOCK.toString());
 			rep = isAllReplyFileDeleted();
 		}

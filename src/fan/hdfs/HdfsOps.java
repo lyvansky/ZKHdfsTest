@@ -13,10 +13,10 @@ public class HdfsOps{
 	//FSNamesystem namesystem;
 	// NameNodeRpcServer rpc;
 	//FileSystem fs;
-	static Zookeeper4Hdfs zkForHdfs = new Zookeeper4Hdfs();
+	private static Zookeeper4Hdfs zkForHdfs = new Zookeeper4Hdfs();
 	private static boolean hasReply = false;
 	private static boolean hasReleaseLock = false;
-	private static long nnId = 1;
+	public static final long nnId = 1;
 	/*
 	public void connect(String host) throws IOException, InterruptedException{
 		zkForHdfs.initZooKeeper(host);;
@@ -24,39 +24,6 @@ public class HdfsOps{
 	*/
 	private static short mutex = 0;
 	//public static CheckFile chk;
-
-	public static Thread listen = new Thread(){
-		public void run() {
-			// TODO Auto-generated method stub
-			TxnState stat = null;
-			try {
-				stat = zkForHdfs.getTxnIdFileState();
-				System.out.println("stat.text:" + stat.text);
-			} catch (KeeperException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-			switch(stat.text){
-			case "PREPARE_LOCK":
-				if(!hasReply){
-					try {
-						hasReply = zkForHdfs.createReplyId(nnId);
-					} catch (KeeperException | InterruptedException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					}
-				}
-				break;
-			case "RELEASE_LOCK":
-				if(!hasReleaseLock){
-					hasReleaseLock = zkForHdfs.deleteReplyFile(nnId);
-				}
-			}
-		}
-	};
 	
 	public void lock() throws InterruptedException {
 		System.out.println("Locking...");
@@ -133,7 +100,7 @@ public class HdfsOps{
 		boolean flag = false;
 		String ops = "RENAME:" + src + "-->" + dst;
 		System.out.println(ops);
-		flag = zkForHdfs.prepareLock(ops);
+		flag = getZkForHdfs().prepareLock(ops);
 		//System.out.println("flag:" + flag);
 		//System.out.println("hahah");
 		if(flag){
@@ -141,14 +108,22 @@ public class HdfsOps{
 			lock();
 			//System.out.println("hasReceivedAllNNReply" + zkForHdfs.hasReceivedAllNNReply());
 			//System.out.println("enter while loop....");
-			while(!zkForHdfs.hasReceivedAllNNReply()){
+			while(!getZkForHdfs().hasReceivedAllNNReply()){
 				Thread.sleep(1000);
 				System.out.println("waitting for receivingall NN Reply..." + i + "s!");
 			}
 			doRename();;
-			zkForHdfs.updateTxnIdFileState(TxnState.RELEASE_LOCK);
+			getZkForHdfs().updateTxnIdFileState(TxnState.RELEASE_LOCK);
 			Thread.sleep(10000);
-			zkForHdfs.deleteTxnIdFile();
+			getZkForHdfs().deleteTxnIdFile();
 		}
+	}
+
+	public static Zookeeper4Hdfs getZkForHdfs() {
+		return zkForHdfs;
+	}
+
+	public static void setZkForHdfs(Zookeeper4Hdfs zkForHdfs) {
+		HdfsOps.zkForHdfs = zkForHdfs;
 	}
 }
